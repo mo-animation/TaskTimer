@@ -1,6 +1,14 @@
 import Foundation
 import SwiftUI
 
+/// Switches for whole features.
+enum Features {
+    /// Logging to the team Google Sheet. Off: TaskTimer keeps everything in the app.
+    /// The sheet code (SheetService, SheetSync, TaskTimer.gs, SheetDoneSheet) stays in the
+    /// project so it can be switched back on.
+    static let sheet = false
+}
+
 /// All user settings live in UserDefaults under these keys (used with @AppStorage).
 enum Pref {
     static let memberName = "memberName"
@@ -14,8 +22,28 @@ enum Pref {
     static let updateSameRow = "updateSameRow"
     static let hideDock = "hideDock"
     static let pauseOnSleep = "pauseOnSleep"
+    static let menuBarStyle = "menuBarStyle"   // "time" (1:05) | "seconds" (01:05:12) | "icon"
+    static let renderNotify = "renderNotify"
+    static let defaultDeliverables = "defaultDeliverables"
+    static let defaultRating = "defaultRating"
+    // Modhesh (Settings → Modhesh; sent to the Chrome extension through the team database)
+    static let defaultChallenge = "defaultChallenge"   // 1 No Challenges, 2 Communication, 3 Briefing, 4 Deadline
+    static let modheshAutoLink = "modheshAutoLink"
+    static let modheshAutoSubmit = "modheshAutoSubmit"
     static let openFinderOnCreate = "openFinderOnCreate"
     static let openAEOnCreate = "openAEOnCreate"
+
+    // Read from the sheet (Settings → Sheet → Sync from Sheet)
+    static let tabMode = "tabMode"                     // "auto" | "manual"
+    static let tabName = "tabName"                     // used when tabMode == "manual"
+    static let statusComplete = "statusCompleteLabel"  // what "Complete" is written as in the sheet
+    static let statusInProcess = "statusInProcessLabel"
+    static let timeFormatFromSheet = "timeFormatFromSheet"
+    static let sheetConfig = "sheetConfig"
+
+    // Where new task folders go
+    static let folderMode = "folderMode"   // "location" | "client" | "months"
+    static let monthsRoot = "monthsRoot"   // folder that holds the month folders ("months" mode)
 
     static let defaultSubfolders = """
     00 - Render
@@ -29,7 +57,9 @@ enum Pref {
     08 - Others
     """
 
-    static let defaultTemplate = "/Users/mousab.hassan/Desktop/Mosap/assets/new.aep"
+    /// No template until each person picks their own (the path below is only shown as an example).
+    static let defaultTemplate = ""
+    static let templateExample = "/Users/you/Templates/new.aep"
 
     static let oldDefaultSubfolders = """
     00 - Render
@@ -42,6 +72,11 @@ enum Pref {
     """
 
     static func registerDefaults() {
+        // The template path used to default to one person's Mac; forget it if it isn't there.
+        if let t = UserDefaults.standard.string(forKey: templatePath),
+           t.hasPrefix("/Users/mousab.hassan/"), !FileManager.default.fileExists(atPath: t) {
+            UserDefaults.standard.removeObject(forKey: templatePath)
+        }
         // If the old folder tree was saved untouched, switch to the new one.
         if let saved = UserDefaults.standard.string(forKey: subfolders),
            saved.trimmingCharacters(in: .whitespacesAndNewlines) == oldDefaultSubfolders.trimmingCharacters(in: .whitespacesAndNewlines) {
@@ -55,8 +90,18 @@ enum Pref {
             updateSameRow: true,
             hideDock: false,
             pauseOnSleep: true,
+            menuBarStyle: "time",
+            renderNotify: true,
+            defaultDeliverables: 1,
+            defaultRating: 5,
+            defaultChallenge: 1,
+            modheshAutoLink: true,
+            modheshAutoSubmit: true,
             openFinderOnCreate: true,
             openAEOnCreate: false,
+            tabMode: "auto",
+            folderMode: "location",
+            timeFormatFromSheet: true,
         ])
     }
 
@@ -64,6 +109,13 @@ enum Pref {
     static func string(_ k: String) -> String { d.string(forKey: k) ?? "" }
     static func bool(_ k: String) -> Bool { d.bool(forKey: k) }
     static func int(_ k: String) -> Int { d.integer(forKey: k) }
+
+    /// Which tab new rows go to: the current month's tab, or the one picked in Settings.
+    static func tabTarget() -> (mode: String, tab: String) {
+        let t = string(tabName).trimmingCharacters(in: .whitespaces)
+        if string(tabMode) == "manual", !t.isEmpty { return ("manual", t) }
+        return ("auto", "")
+    }
 
     static var subfolderList: [String] {
         string(subfolders)
@@ -79,6 +131,12 @@ enum Fmt {
     static func clock(_ s: TimeInterval) -> String {
         let t = Int(max(0, s))
         return String(format: "%02d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60)
+    }
+
+    /// "1:05" — hours and minutes, for the menu bar.
+    static func menuClock(_ s: TimeInterval) -> String {
+        let m = Int(max(0, s)) / 60
+        return String(format: "%d:%02d", m / 60, m % 60)
     }
 
     static func short(_ s: TimeInterval) -> String {
@@ -120,6 +178,27 @@ enum Fmt {
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
+
+    /// Hours as a decimal, e.g. 3, 3.5, 0.75.
+    static func hours(_ s: TimeInterval) -> String {
+        let h = (max(0, s) / 3600 * 100).rounded() / 100
+        var str = String(format: "%.2f", h)
+        while str.hasSuffix("0") { str.removeLast() }
+        if str.hasSuffix(".") { str.removeLast() }
+        return str
+    }
+
+    static let monthYear: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
+        return f
+    }()
+
+    static func relative(_ d: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f.localizedString(for: d, relativeTo: Date())
+    }
 
     static let nice: DateFormatter = {
         let f = DateFormatter()

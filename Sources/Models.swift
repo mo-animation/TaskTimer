@@ -3,25 +3,36 @@ import Foundation
 // MARK: - Status
 
 enum TaskStatus: String, Codable, CaseIterable, Identifiable {
-    case active      // being worked on, never logged yet
-    case inProcess   // logged to the sheet as "In Process"
-    case complete    // logged to the sheet as "Complete"
+    case incoming    // added, not started yet
+    case active      // in progress
+    case inProcess   // sheet era: logged as "In Process" — shown as In Progress
+    case complete    // done
 
     var id: String { rawValue }
 
+    /// The statuses offered in menus (inProcess only exists in older data).
+    static var choices: [TaskStatus] { [.incoming, .active, .complete] }
+
+    var isInProgress: Bool { self == .active || self == .inProcess }
+
     var title: String {
         switch self {
-        case .active: return "Active"
-        case .inProcess: return "In Process"
-        case .complete: return "Complete"
+        case .incoming: return "Incoming"
+        case .active, .inProcess: return "In Progress"
+        case .complete: return "Completed"
         }
     }
 
-    /// Text written into the Status column of the team sheet.
+    /// Text written into the Status column of the team sheet
+    /// (as picked in Settings → Sheet, filled in from the sheet's Status dropdown).
     var sheetLabel: String {
         switch self {
-        case .complete: return "Complete"
-        default: return "In Process"
+        case .complete:
+            let v = Pref.string(Pref.statusComplete)
+            return v.isEmpty ? "Complete" : v
+        default:
+            let v = Pref.string(Pref.statusInProcess)
+            return v.isEmpty ? "In Process" : v
         }
     }
 }
@@ -31,6 +42,10 @@ enum TaskStatus: String, Codable, CaseIterable, Identifiable {
 struct Client: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var name: String
+    /// true when the last Sync didn't find this name in the sheet's Account dropdown.
+    var missingFromSheet: Bool?
+    /// This client's folder on this Mac (month folders and task folders go inside).
+    var folderPath: String?
 }
 
 // MARK: - Work session
@@ -59,6 +74,23 @@ struct TaskItem: Identifiable, Codable, Hashable {
     var lastLoggedAt: Date?
     /// A log that failed (no internet, etc.) and is waiting to be retried.
     var pendingLog: PendingLog?
+    /// Set on amends (subtasks): the task they belong to.
+    var parentID: UUID?
+    /// Tab of the sheet that holds sheetRow.
+    var sheetTab: String?
+    /// The day picked when the task was marked Done.
+    var workDate: Date?
+    /// Filled in at Done (sent to Modhesh's Log Time).
+    var deliverables: Int?
+    var rating: Int?
+    /// Modhesh's "Did you face any challenges?" (1 none, 2 communication, 3 briefing, 4 deadline).
+    var challenge: Int?
+    /// Incoming task whose folder is made when it is started.
+    var wantsFolder: Bool?
+    /// For such a task: the location picked by hand (when not using client / month folders).
+    var folderBase: String?
+
+    var isSubtask: Bool { parentID != nil }
 
     var isRunning: Bool {
         guard let last = sessions.last else { return false }
@@ -90,6 +122,7 @@ struct TaskItem: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, name, clientID, folderPath, createdAt, sessions, status
         case manualAdjust, loggedSeconds, sheetRow, lastLoggedAt, pendingLog
+        case parentID, sheetTab, workDate, wantsFolder, folderBase, deliverables, rating, challenge
     }
 
     init(from decoder: Decoder) throws {
@@ -106,6 +139,14 @@ struct TaskItem: Identifiable, Codable, Hashable {
         sheetRow = try c.decodeIfPresent(Int.self, forKey: .sheetRow)
         lastLoggedAt = try c.decodeIfPresent(Date.self, forKey: .lastLoggedAt)
         pendingLog = try c.decodeIfPresent(PendingLog.self, forKey: .pendingLog)
+        parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
+        sheetTab = try c.decodeIfPresent(String.self, forKey: .sheetTab)
+        workDate = try c.decodeIfPresent(Date.self, forKey: .workDate)
+        wantsFolder = try c.decodeIfPresent(Bool.self, forKey: .wantsFolder)
+        folderBase = try c.decodeIfPresent(String.self, forKey: .folderBase)
+        deliverables = try c.decodeIfPresent(Int.self, forKey: .deliverables)
+        rating = try c.decodeIfPresent(Int.self, forKey: .rating)
+        challenge = try c.decodeIfPresent(Int.self, forKey: .challenge)
     }
 }
 
@@ -121,6 +162,9 @@ struct PendingLog: Codable, Hashable {
     var updateRow: Int?
     var folder: String
     var error: String?
+    /// "auto" (current month's tab) or "manual" (the named tab). nil = old entries.
+    var tabMode: String?
+    var tab: String?
 }
 
 // MARK: - Saved data file

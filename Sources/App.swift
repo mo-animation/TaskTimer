@@ -8,6 +8,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         MainActor.assumeIsolated {
             UpdateManager.shared.start()
+            NotificationHandler.shared.install()
+            RenderWatcher.shared.start()
+            ExtensionInstaller.refresh()
+            _ = ExtensionMonitor.shared
+            if Features.sheet { SheetSync.shared.start() }
+            Task { @MainActor in await CloudSync.shared.start() }
         }
     }
     // Keep running in the menu bar when the window is closed.
@@ -36,7 +42,7 @@ struct TaskTimerApp: App {
     }
 
     var body: some Scene {
-        Window("TaskTimer", id: "main") {
+        Window("TaskTimer Dev", id: "main") {
             MainView()
                 .environmentObject(store)
         }
@@ -84,17 +90,33 @@ struct TaskTimerApp: App {
 
 // MARK: - Menu bar
 
+/// Kept short on purpose: when the menu bar is full (especially next to the camera notch)
+/// macOS hides items that don't fit, and a wide label that changes width every second
+/// is the first to disappear.
 struct MenuBarLabel: View {
     @EnvironmentObject var store: Store
+    @Environment(\.openWindow) var openWindow
+    @AppStorage(Pref.menuBarStyle) var style = "time"
+
     var body: some View {
-        if let r = store.running {
-            HStack(spacing: 4) {
+        label
+            .onChange(of: store.windowRequest) { _ in
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        if let r = store.running, style != "icon" {
+            let secs = r.totalSeconds(at: store.now)
+            HStack(spacing: 3) {
                 Image(systemName: "timer")
-                Text(Fmt.clock(r.totalSeconds(at: store.now)))
+                Text(style == "seconds" ? Fmt.clock(secs) : Fmt.menuClock(secs))
                     .monospacedDigit()
             }
         } else {
-            Image(systemName: "timer")
+            Image(systemName: store.running == nil ? "timer" : "timer.circle.fill")
         }
     }
 }
@@ -112,7 +134,7 @@ struct MenuBarPanel: View {
             GlowBackground(animate: false)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("TaskTimer")
+                    Text("TaskTimer Dev")
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .gradientText()
                     Spacer()
@@ -125,7 +147,7 @@ struct MenuBarPanel: View {
 
                 if let r = store.running {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(r.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Text(store.displayName(r)).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                         if !store.clientName(r.clientID).isEmpty {
                             Text(store.clientName(r.clientID)).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
@@ -158,7 +180,7 @@ struct MenuBarPanel: View {
                             Button { store.start(t.id) } label: {
                                 HStack {
                                     Image(systemName: "play.fill").font(.system(size: 9)).foregroundStyle(Theme.cool)
-                                    Text(t.name).lineLimit(1)
+                                    Text(store.displayName(t)).lineLimit(1)
                                     Spacer()
                                     Text(Fmt.short(t.totalSeconds(at: store.now)))
                                         .foregroundStyle(.secondary)
